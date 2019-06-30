@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 2.8)
 
+# if(CMAKE_SYSTEM_NAME STREQUAL Darwin)
+#   set(CMAKE_REQUIRED_INCLUDES "/usr/local/include" "/usr/include")
+# endif()
+
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   if(DEFINED ENV{VITASDK})
     set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake" CACHE PATH "toolchain file")
@@ -8,18 +12,22 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   endif()
 endif()
 
-project(net_libcurl)
+project(retrothumb)
+
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
-set(VITA_APP_NAME "Net Libcurl example")
+set(VITA_APP_NAME "Retrothumb")
 set(VITA_TITLEID  "VSDK00013")
 set(VITA_VERSION  "01.00")
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(libzip REQUIRED)
+find_package(libyaml REQUIRED)
 
 include_directories(
   ../common
@@ -39,6 +47,7 @@ target_link_libraries(${PROJECT_NAME}
   SceSsl_stub
   ${CURL_LIBRARIES}
   ${OPENSSL_LIBRARIES}
+  ${libyaml_LIBRARIES}
   c
   m
   z

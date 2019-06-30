@@ -1,6 +1,6 @@
 #define VITASDK
 
-#include <psp2/io/stat.h> 
+#include <psp2/io/stat.h>
 #include <psp2/sysmodule.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/display.h>
@@ -13,186 +13,212 @@
 
 #include <stdio.h>
 #include <malloc.h>
+#include <iostream>
 #include <string.h>
 #include <string>
-
-#include "debugScreen.h"
+#include <regex>
+#include <vector>
+#include <sstream>
 
 #include <curl/curl.h>
+#include <yaml.h>
 
+#include "debugScreen.h"
+#include "fio.h"
+#include "curlutil.h"
 
-struct stringcurl {
-  char *ptr;
-  size_t len;
-}; 
-void init_string(struct stringcurl *s) {
-  s->len = 0;
-  s->ptr = (char*)malloc(s->len+1);
-  if (s->ptr == NULL) {
-    fprintf(stderr, "malloc() failed\n");
-    return;
-    //exit(EXIT_FAILURE);
-  }
-  s->ptr[0] = '\0';
-}
-size_t writefunc(void *ptr, size_t size, size_t nmemb, struct stringcurl *s)
+void psvLog(std::string msg)
 {
-  size_t new_len = s->len + size*nmemb;
-  s->ptr = (char*)realloc(s->ptr, new_len+1);
-  if (s->ptr == NULL) {
-    fprintf(stderr, "realloc() failed\n");
-    return 0;
-    //exit(EXIT_FAILURE);
-  }
-  memcpy(s->ptr+s->len, ptr, size*nmemb);
-  s->ptr[new_len] = '\0';
-  s->len = new_len;
-
-  return size*nmemb;
+	psvDebugScreenPrintf(msg.c_str());
+	psvDebugScreenPrintf("\n\n");
 }
 
-static size_t write_data_to_disk(void *ptr, size_t size, size_t nmemb, void *stream)
+void curlDownloadFile(std::string url, std::string file)
 {
-  size_t written = sceIoWrite(   *(int*) stream , ptr , size*nmemb);
-  return written;
-}
-
-void curlDownloadFile(std::string url , std::string file){
-	int imageFD = sceIoOpen( file.c_str(), SCE_O_WRONLY | SCE_O_CREAT, 0777);
-	if(!imageFD){
+	int fd = sceIoOpen(file.c_str(), SCE_O_WRONLY | SCE_O_CREAT, 0777);
+	if (!fd)
+	{
 		return;
 	}
-	
+
 	CURL *curl;
 	CURLcode res;
-	curl = curl_easy_init();
-	if(curl) {
-		struct stringcurl body;
-		init_string(&body);
-		struct stringcurl header;
-		init_string(&header);
-		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-		// Set useragant string
-		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
-		// not sure how to use this when enabled
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-		// not sure how to use this when enabled
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-		// Set SSL VERSION to TLS 1.2
-		curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-		// Set timeout for the connection to build
-		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-		// Follow redirects (?)
-		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
-		curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-		// The function that will be used to write the data 
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_disk);
-		// The data filedescriptor which will be written to
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &imageFD);
-		// write function of response headers
-		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, writefunc);
-		// the response header data where to write to
-		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header);
-		// Request Header :
-		struct curl_slist *headerchunk = NULL;
-		headerchunk = curl_slist_append(headerchunk, "Accept: */*");
-		headerchunk = curl_slist_append(headerchunk, "Content-Type: application/json");
-		headerchunk = curl_slist_append(headerchunk, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
-		//headerchunk = curl_slist_append(headerchunk, "Host: discordapp.com");  Setting this will lead to errors when trying to download. should be set depending on location : possible : cdn.discordapp.com or images.discordapp.com
-		headerchunk = curl_slist_append(headerchunk, "Content-Length: 0");
-		res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerchunk);
-		
-		
-		// Perform the request
-		res = curl_easy_perform(curl);
-		int httpresponsecode = 0;
-		curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &httpresponsecode);
-		
-		if(res != CURLE_OK){
-			//fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-			
-		}else{
-			
-		}
-		
-		
-	}else{
-		
+	curl = curl_easy_init();
+	if (!curl)
+	{
+		return;
 	}
 
-	// close filedescriptor
-	sceIoClose(imageFD);
+	struct stringcurl header;
+	init_stringcurl(&header);
 
-	// cleanup
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+	curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_to_file);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fd);
+	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_write_headers);
+	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header);
+
+	struct curl_slist *headerChunk = NULL;
+	headerChunk = curl_slist_append(headerChunk, "Accept: */*");
+	headerChunk = curl_slist_append(headerChunk, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
+	res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerChunk);
+
+	res = curl_easy_perform(curl);
+	int respCode = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respCode);
+
+	if (res != CURLE_OK)
+	{
+		psvDebugScreenPrintf("Failed to download %s, status: %s", url.c_str(), curl_easy_strerror(res));
+		//fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+	}
+
+	sceIoClose(fd);
 	curl_easy_cleanup(curl);
-	
 }
 
-void netInit() {
-	psvDebugScreenPrintf("Loading module SCE_SYSMODULE_NET\n");
+std::vector<std::string> getThumbTypes() {
+	std::vector<std::string> thumbtypes;
+	thumbtypes.push_back("Named_Titles");
+	thumbtypes.push_back("Named_Snaps");
+	thumbtypes.push_back("Named_Boxarts");
+	return thumbtypes;
+}
+
+void downloadThumbnails(std::string core, std::string title)
+{
+	psvDebugScreenPrintf("Downloading %s for core %s\n", title.c_str(), core.c_str());
+
+	std::vector<std::string> thumbtypes = getThumbTypes();
+
+	for (int i = 0; i < thumbtypes.size(); i++) {
+		std::string thumbtype = thumbtypes[i];
+
+		std::string url;
+		std::string loc;
+
+		std::stringstream ss1;
+		ss1 << "https://raw.githubusercontent.com/libretro/libretro-thumbnails/master/" << core << "/" << thumbtype << "/" << title << ".png";
+		url = ss1.str();
+
+		std::stringstream ss2;
+		ss2 << "ux0:data/retroarch/thumbnails/" << core << "/" << thumbtype << "/" << title << ".png";
+		loc = ss2.str();
+
+		std::regex regex("\\s"); 
+		url = std::regex_replace(url, regex, "%20");
+
+		curlDownloadFile(url, loc);
+	}
+}
+
+void netInit()
+{
 	sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
-	
-	psvDebugScreenPrintf("Running sceNetInit\n");
+
 	SceNetInitParam netInitParam;
-	int size = 4*1024*1024;
+	int size = 4 * 1024 * 1024;
 	netInitParam.memory = malloc(size);
 	netInitParam.size = size;
 	netInitParam.flags = 0;
 	sceNetInit(&netInitParam);
-
-	psvDebugScreenPrintf("Running sceNetCtlInit\n");
 	sceNetCtlInit();
 }
 
-void netTerm() {
-	psvDebugScreenPrintf("Running sceNetCtlTerm\n");
+void netTerm()
+{
 	sceNetCtlTerm();
-
-	psvDebugScreenPrintf("Running sceNetTerm\n");
 	sceNetTerm();
-
-	psvDebugScreenPrintf("Unloading module SCE_SYSMODULE_NET\n");
 	sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
 }
 
-void httpInit() {
-	psvDebugScreenPrintf("Loading module SCE_SYSMODULE_HTTP\n");
+void httpInit()
+{
 	sceSysmoduleLoadModule(SCE_SYSMODULE_HTTP);
-
-	psvDebugScreenPrintf("Running sceHttpInit\n");
-	sceHttpInit(4*1024*1024);
+	sceHttpInit(4 * 1024 * 1024);
 }
 
-void httpTerm() {
-	psvDebugScreenPrintf("Running sceHttpTerm\n");
+void httpTerm()
+{
 	sceHttpTerm();
-
-	psvDebugScreenPrintf("Unloading module SCE_SYSMODULE_HTTP\n");
 	sceSysmoduleUnloadModule(SCE_SYSMODULE_HTTP);
 }
 
-
-int main(int argc, char *argv[]) {
-	psvDebugScreenInit();
-	psvDebugScreenPrintf("HTTP Sample v.1.0 by barooney\n\n");
-
+void initApp()
+{
 	netInit();
 	httpInit();
+}
 
-	struct SceIoStat * dirStat = (SceIoStat*)malloc(sizeof(SceIoStat));
-	if(sceIoGetstat("ux0:data/curltest" , dirStat) < 0){
-		sceIoMkdir("ux0:data/curltest" , 0777);
-	}
-	psvDebugScreenPrintf("Downloading github file");
-	curlDownloadFile("https://github.com/devingDev/VitaCord/releases/download/1.5fix1/vita_cord.vpk",  "ux0:data/curltest/vita_cord1.5fix1.vpk");
-
+void shutdownApp(int code)
+{
 	httpTerm();
 	netTerm();
 
-	psvDebugScreenPrintf("This app will close in 10 seconds!\n");
-	sceKernelDelayThread(10*1000*1000);
+	psvDebugScreenPrintf("Shutting down in 10 seconds...");
+	sceKernelDelayThread(10 * 1000 * 1000);
+	sceKernelExitProcess(code);
+}
 
-	sceKernelExitProcess(0);
+void createThumbDirs(std::string core)
+{
+	psvDebugScreenPrintf("Creating thumbnails dirs for core %s\n\n", core.c_str());
+
+	std::vector<std::string> thumbtypes = getThumbTypes();
+
+	for (int i = 0; i < thumbtypes.size(); i++) {
+		std::string thumbtype = thumbtypes[i];
+		std::stringstream ss;
+
+		ss << "ux0:data/retroarch/thumbnails/" << core << "/" << thumbtype;
+		psvMkdir(ss.str());
+		ss.clear();
+	}
+}
+
+int main(int argc, char *argv[])
+{
+	psvDebugScreenInit();
+	psvDebugScreenPrintf("App will try to download thumbnails for Retroarch roms...\n\n");
+
+	initApp();
+
+	struct SceIoStat *iostat = (SceIoStat *)malloc(sizeof(SceIoStat));
+
+	if (sceIoGetstat("ux0:data/retroarch/thumbnails", iostat) < 0)
+	{
+		psvDebugScreenPrintf("Folder 'ux0:data/retroarch/thumbnails' doesn't exist...\n");
+		shutdownApp(0);
+		return 0;
+	}
+
+	if (sceIoGetstat("ux0:data/retroarch/roms", iostat) < 0)
+	{
+		psvDebugScreenPrintf("Folder 'ux0:data/retroarch/roms' doesn't exist!...\n");
+		shutdownApp(0);
+		return 0;
+	}
+
+	// TODO: traverse folder ux0:/data/retroarch/roms
+	// TODO: for each $core folder and each $file in $core folder
+	// TODO: download $boxart file and place it under ux0:/data/retroarch/thumbnails/$core/Named_Boxarts/$boxart
+
+	std::string core = "Nintendo - Nintendo Entertainment System";
+
+	createThumbDirs(core);
+
+	downloadThumbnails(core, "Darkwing Duck (USA)");
+	downloadThumbnails(core, "Battletoads (USA)");
+	downloadThumbnails(core, "Battletoads-Double Dragon (USA)");
+
+	shutdownApp(0);
 	return 0;
 }
